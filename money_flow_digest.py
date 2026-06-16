@@ -36,7 +36,7 @@ def local_today():
 # CONFIG  — edit these, or set the matching environment variables.
 # ----------------------------------------------------------------------------
 SMTP_HOST = os.getenv("MF_SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("MF_SMTP_PORT", "587"))
+SMTP_PORT = int(os.getenv("MF_SMTP_PORT") or "587")
 SMTP_USER = os.getenv("MF_SMTP_USER", "youremail@gmail.com")      # your email
 SMTP_PASS = os.getenv("MF_SMTP_PASS", "your-app-password")        # app password
 EMAIL_TO  = os.getenv("MF_EMAIL_TO",  SMTP_USER)                  # where to send

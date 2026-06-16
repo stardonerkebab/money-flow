@@ -30,7 +30,7 @@ def local_now():
 # ── Config ───────────────────────────────────────────────────────────────────
 NTFY_TOPIC  = os.getenv("MF_NTFY_TOPIC", "moneyflowjaswindersinghkaur")
 SMTP_HOST   = os.getenv("MF_SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT   = int(os.getenv("MF_SMTP_PORT", "587"))
+SMTP_PORT   = int(os.getenv("MF_SMTP_PORT") or "587")
 SMTP_USER   = os.getenv("MF_SMTP_USER", "youremail@gmail.com")
 SMTP_PASS   = os.getenv("MF_SMTP_PASS", "your-app-password")
 EMAIL_TO    = os.getenv("MF_EMAIL_TO", SMTP_USER)
