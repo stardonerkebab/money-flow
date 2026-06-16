@@ -1,0 +1,41 @@
+name: Money Flow Daily
+
+on:
+  schedule:
+    # 07:00 UTC = 09:00 Spain summer time (UTC+2)
+    - cron: '0 7 * * 1-5'   # Monday-Friday only
+  workflow_dispatch:
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    env:
+      MF_NTFY_TOPIC: ${{ secrets.MF_NTFY_TOPIC }}
+      MF_SMTP_HOST:  ${{ secrets.MF_SMTP_HOST }}
+      MF_SMTP_PORT:  ${{ secrets.MF_SMTP_PORT }}
+      MF_SMTP_USER:  ${{ secrets.MF_SMTP_USER }}
+      MF_SMTP_PASS:  ${{ secrets.MF_SMTP_PASS }}
+      MF_EMAIL_TO:   ${{ secrets.MF_EMAIL_TO }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Money Flow digest (ntfy summary)
+        run: python money_flow_digest.py --no-email --push
+
+      - name: Run Macro Intelligence report (full PDF)
+        run: python macro_daily.py --no-email --push
+
+      - name: Upload PDF report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macro-report-${{ github.run_number }}
+          path: macro_report_*.pdf
+          retention-days: 30
