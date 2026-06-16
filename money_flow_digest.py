@@ -21,6 +21,16 @@ import ssl
 import sys
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from zoneinfo import ZoneInfo
+
+# ----------------------------------------------------------------------------
+# TIMEZONE  — all "today" references use this so dates match Spain local time.
+# ----------------------------------------------------------------------------
+LOCAL_TZ = ZoneInfo("Europe/Madrid")
+
+def local_today():
+    """Return today's date in Spain local time (not UTC)."""
+    return dt.datetime.now(LOCAL_TZ).date()
 
 # ----------------------------------------------------------------------------
 # CONFIG  — edit these, or set the matching environment variables.
@@ -114,7 +124,7 @@ def make_fake_history(tickers):
     import pandas as pd
     rng = np.random.default_rng(7)
     out = {}
-    days = pd.date_range(end=dt.date.today(), periods=260, freq="B")
+    days = pd.date_range(end=local_today(), periods=260, freq="B")
     for i, t in enumerate(tickers):
         # separate short-term and long-term drift so the two scores diverge
         long_drift = rng.normal(0.0006 * (1 if i % 2 else -1), 0.0004)
@@ -463,7 +473,7 @@ def fmt(v, money=False, pct_=False):
 
 
 def render_html(report, demo=False):
-    today = dt.date.today().strftime("%A, %B %d, %Y")
+    today = local_today().strftime("%A, %B %d, %Y")
     mc = {"Risk-On": "#1D9E75", "Risk-Off": "#E24B4A", "Mixed": "#888780"}
     ms, ml = report["mood_short"], report["mood_long"]
 
@@ -704,11 +714,14 @@ def send_push(report):
                      f"(-{w['discount']:.0f}% off high)")
     body = "\n".join(lines).encode("utf-8")
 
+    # Use Spain local date in the notification title
+    today_local = local_today()
+
     req = urllib.request.Request(
         f"https://ntfy.sh/{NTFY_TOPIC}",
         data=body,
         headers={
-            "Title": f"Money Flow - {dt.date.today():%b %d}",
+            "Title": f"Money Flow - {today_local:%b %d}",
             "Tags": "chart_with_upwards_trend",
             "Priority": "default",
         },
@@ -774,6 +787,7 @@ def main():
     report = build_report(sector_hist, macro_hist, stock_hist, fundamentals)
     html = render_html(report, demo=args.test)
 
+    today_local = local_today()
     print(f"\nShort-term mood: {report['mood_short']}   Long-term mood: {report['mood_long']}")
     print("\nShort-term top sectors:")
     for s in report["sectors_short"][:5]:
@@ -811,7 +825,7 @@ def main():
     if args.no_email:
         print("\n(--no-email set; skipping send)")
     else:
-        subject = f"Money Flow Daily — ST {report['mood_short']} / LT {report['mood_long']} — {dt.date.today():%b %d}"
+        subject = f"Money Flow Daily — ST {report['mood_short']} / LT {report['mood_long']} — {today_local:%b %d}"
         send_email(html, subject)
         print(f"\nEmail sent to {EMAIL_TO}")
 
