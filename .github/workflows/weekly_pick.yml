@@ -1,0 +1,38 @@
+name: Weekly DCA Pick
+
+on:
+  schedule:
+    # 06:00 UTC Monday = 08:00 Madrid (CEST) / 07:00 (CET)
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install --quiet yfinance pandas numpy requests
+
+      - name: Run screener
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: https://ntfy.sh
+          WEEKLY_AMOUNT: "100"
+        run: python weekly_pick.py
+
+      - name: Commit ledger
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add picks_log.csv weekly_rank_latest.csv universe.txt || true
+          git diff --staged --quiet || git commit -m "weekly pick $(date -u +%Y-%m-%d)"
+          git push
