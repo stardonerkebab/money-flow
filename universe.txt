@@ -1,0 +1,19 @@
+# Core long-term universe. Edit freely - this is YOUR list, the script
+# only decides which of YOUR names looks best this week.
+# Broad market ballast
+VOO
+VWCE.DE
+# Quality compounders
+MSFT
+GOOGL
+AAPL
+AMZN
+BRK-B
+V
+MA
+UNH
+JNJ
+COST
+LIN
+ASML
+NVO
