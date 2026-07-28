@@ -24,7 +24,7 @@ jobs:
 
       - name: Run screener
         env:
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOPIC: ${{ secrets.MF_NTFY_TOPIC }}
           NTFY_SERVER: https://ntfy.sh
           WEEKLY_AMOUNT: "100"
         run: python weekly_pick.py
