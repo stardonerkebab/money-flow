@@ -257,19 +257,39 @@ def reasons(row: pd.Series) -> str:
 # ----------------------------------------------------------------------
 # Output
 # ----------------------------------------------------------------------
+def ntfy_url() -> str:
+    """Accept either a bare topic name or a full https://server/topic URL."""
+    t = NTFY_TOPIC.strip().strip("/")
+    if t.startswith("http://") or t.startswith("https://"):
+        return t
+    return f"{NTFY_SERVER}/{t}"
+
+
+def ascii_safe(s: str) -> str:
+    """ntfy headers must be latin-1. Strip anything that isn't."""
+    subs = {"\u2014": "-", "\u2013": "-", "\u2018": "'", "\u2019": "'",
+            "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u2192": "->"}
+    for bad, good in subs.items():
+        s = s.replace(bad, good)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
 def notify(title: str, body: str, tags: str = "chart_with_upwards_trend"):
     if DRY_RUN or not NTFY_TOPIC:
-        print("--- ntfy (not sent) ---")
+        print("--- ntfy (not sent, topic empty) ---")
         print(title)
         print(body)
         return
+    url = ntfy_url()
+    print(f"[i] posting to {url}")
     try:
         r = requests.post(
-            f"{NTFY_SERVER}/{NTFY_TOPIC}",
+            url,
             data=body.encode("utf-8"),
-            headers={"Title": title, "Tags": tags, "Priority": "default"},
+            headers={"Title": ascii_safe(title), "Tags": tags, "Priority": "default"},
             timeout=20,
         )
+        print(f"[i] ntfy status {r.status_code}: {r.text[:200]}")
         r.raise_for_status()
         print("[ok] ntfy sent")
     except Exception as exc:
@@ -320,7 +340,7 @@ def main():
               "Ranking tool, not advice. Check it yourself."]
 
     body = "\n".join([l for l in lines if l is not None])
-    notify(f"Weekly DCA {today.isoformat()} — {top['ticker']}", body)
+    notify(f"Weekly DCA {today.isoformat()} - {top['ticker']}", body)
 
     # append to ledger
     new = pd.DataFrame([{
@@ -339,3 +359,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+           
+
+
