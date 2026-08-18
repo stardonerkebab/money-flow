@@ -55,6 +55,13 @@ MIN_MCAP = 5e9          # no micro caps
 MAX_BELOW_200DMA = 0.80 # skip if price < 80% of 200-day MA (broken trend)
 MAX_FWD_PE = 60         # skip obvious froth
 
+# Max share price, in USD, for a name to be eligible. Set high (e.g. 999999)
+# to disable. NOTE: share price level says nothing about whether a stock is
+# cheap - a $40 share can be far more expensive than a $400 one. This filter
+# only exists for brokers without fractional shares. Prices in other
+# currencies are converted to USD before the comparison.
+MAX_PRICE = float(os.getenv("MAX_PRICE", "100"))
+
 # The same name CAN win week after week - that is intended. The only brake
 # is this: once a ticker exceeds this share of everything invested so far,
 # it steps aside and the runner-up gets the money. Set to 1.0 to disable.
@@ -135,6 +142,43 @@ def num(info: dict, key: str):
     return np.nan if not np.isfinite(v) else v
 
 
+_FX_CACHE = {}
+
+
+def fx_rate(frm: str, to: str = "USD") -> float:
+    """
+    FX rate to multiply an amount in `frm` by, to get `to`.
+    Returns np.nan if it can't be resolved, so callers can fail loudly
+    rather than silently comparing DKK against USD.
+    """
+    if not frm or not to:
+        return np.nan
+    frm, to = frm.upper(), to.upper()
+    if frm == to:
+        return 1.0
+    key = (frm, to)
+    if key in _FX_CACHE:
+        return _FX_CACHE[key]
+
+    rate = np.nan
+    for pair, invert in ((f"{frm}{to}=X", False), (f"{to}{frm}=X", True)):
+        try:
+            px = yf.Ticker(pair).history(period="5d")["Close"].dropna()
+            if len(px):
+                v = float(px.iloc[-1])
+                if v > 0:
+                    rate = (1.0 / v) if invert else v
+                    break
+        except Exception as exc:
+            print(f"[!] fx {pair}: {exc}")
+        time.sleep(0.3)
+
+    if np.isnan(rate):
+        print(f"[!] could not resolve FX {frm}->{to}")
+    _FX_CACHE[key] = rate
+    return rate
+
+
 def zscore(s: pd.Series) -> pd.Series:
     """Winsorised z-score. NaN -> 0 so a missing field is neutral, not fatal."""
     s = s.astype(float)
@@ -178,13 +222,41 @@ def build_frame(tickers: list, ledger: pd.DataFrame) -> pd.DataFrame:
         mcap = num(info, "marketCap")
         fcf = num(info, "freeCashflow")
 
+        # --- currency handling -------------------------------------------
+        # marketCap and price come back in the LISTING currency, but
+        # freeCashflow comes back in the REPORTING currency. For ADRs and
+        # foreign listings these differ (NVO: USD listing, DKK books), and
+        # dividing one by the other inflates FCF yield by the FX rate.
+        quote_cur = (info.get("currency") or "USD").upper()
+        fin_cur = (info.get("financialCurrency") or quote_cur).upper()
+
+        if fcf is not np.nan and not np.isnan(fcf) and fin_cur != quote_cur:
+            r = fx_rate(fin_cur, quote_cur)
+            if np.isnan(r):
+                fcf = np.nan  # unknown FX -> drop the metric, never guess
+                print(f"[!] {t}: dropping FCF, no {fin_cur}->{quote_cur} rate")
+            else:
+                fcf = fcf * r
+                print(f"[i] {t}: FCF converted {fin_cur}->{quote_cur} @ {r:.5f}")
+
+        usd_r = fx_rate(quote_cur, "USD")
+        price_usd = price * usd_r if not np.isnan(usd_r) else np.nan
+
+        # forwardPE fallback: NaN is truthy in Python, so `a or b` never
+        # falls through. Test explicitly.
+        fwd = num(info, "forwardPE")
+        if np.isnan(fwd):
+            fwd = num(info, "trailingPE")
+
         rows.append({
             "ticker": t,
             "price": price,
+            "price_usd": price_usd,
+            "currency": quote_cur,
             "mcap": mcap,
             "sma200_ratio": price / sma200 if sma200 else np.nan,
             "dd_52w": -(price / high52 - 1) * 100 if high52 else np.nan,  # 12 = 12% below high
-            "fwd_pe": num(info, "forwardPE") or num(info, "trailingPE"),
+            "fwd_pe": fwd,
             "roe": num(info, "returnOnEquity") * 100 if not np.isnan(num(info, "returnOnEquity")) else np.nan,
             "rev_growth": num(info, "revenueGrowth") * 100 if not np.isnan(num(info, "revenueGrowth")) else np.nan,
             "gross_margin": num(info, "grossMargins") * 100 if not np.isnan(num(info, "grossMargins")) else np.nan,
@@ -213,6 +285,16 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     ok = ok[(ok["mcap"].isna()) | (ok["mcap"] >= MIN_MCAP)]
     ok = ok[(ok["sma200_ratio"].isna()) | (ok["sma200_ratio"] >= MAX_BELOW_200DMA)]
     ok = ok[(ok["fwd_pe"].isna()) | (ok["fwd_pe"] <= MAX_FWD_PE)]
+
+    # Share price ceiling. Unlike the others, a missing price is NOT given
+    # the benefit of the doubt - if we can't price it in USD we can't know
+    # it clears the ceiling.
+    if MAX_PRICE < 999999:
+        too_dear = ok["price_usd"].isna() | (ok["price_usd"] > MAX_PRICE)
+        for _, r in ok[too_dear].iterrows():
+            shown = "unknown" if np.isnan(r["price_usd"]) else f"${r['price_usd']:.0f}"
+            print(f"[i] {r['ticker']} price {shown} > ${MAX_PRICE:.0f} cap - skipped")
+        ok = ok[~too_dear]
 
     total = float(df["invested"].sum())
     if total > 0 and MAX_POSITION_PCT < 1.0 and len(ok) > 1:
@@ -316,7 +398,10 @@ def main():
 
     ranked = score(df)
     top = ranked.iloc[0]
-    shares = WEEKLY_AMOUNT / top["price"] if top["price"] else 0
+    # size off the USD price - the $100 is dollars, the quote may not be
+    px_usd = top.get("price_usd", np.nan)
+    px_for_sizing = px_usd if not np.isnan(px_usd) else top["price"]
+    shares = WEEKLY_AMOUNT / px_for_sizing if px_for_sizing else 0
 
     # how many weeks in a row this name has won
     streak = 0
@@ -328,7 +413,9 @@ def main():
 
     lines = [
         f"BUY: {top['ticker']}  ~${WEEKLY_AMOUNT:.0f}",
-        f"Price ${top['price']:.2f}  ->  {shares:.4f} sh",
+        f"Price ${px_for_sizing:.2f}  ->  {shares:.4f} sh"
+        + (f"  ({top['currency']} {top['price']:.2f})"
+           if top.get("currency", "USD") != "USD" else ""),
         f"Why: {reasons(top)}",
     ]
     if streak:
@@ -359,6 +446,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-           
-
-
